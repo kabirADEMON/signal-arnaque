@@ -46,12 +46,24 @@ FastAPI · PostgreSQL · SQLAlchemy 2 · Alembic · React · Vite
 
 ## Sécurité
 
-- Limites par visiteur : 5 signalements / 10 min, 10 tentatives de connexion / 10 min, 30 vérifications / min.
-- Connexion des agents par jeton JWT signé et à durée limitée ; même message et même temps de calcul que
-  l'email existe ou non (pas d'énumération des comptes).
-- Contraintes en base (montant positif, valeurs d'énumération) en plus de la validation de l'API.
-- En-têtes de sécurité (CSP, interdiction d'intégration dans un cadre, `nosniff`), réponses d'API non mises en cache.
+Chaque protection ci-dessous est couverte par un test qui rejoue l'attaque (`tests/test_securite.py`).
+
+- **Clé de signature obligatoire** : sans `JWT_SECRET` de 32 caractères au moins, le serveur refuse de démarrer.
+  Avec la clé de développement, publique dans ce dépôt, n'importe qui pourrait fabriquer un jeton d'administrateur.
+- **Limites non contournables** : 5 signalements / 10 min, 10 connexions / 10 min, 30 vérifications / min par visiteur.
+  L'en-tête `X-Forwarded-For`, que le client peut inventer, est ignoré ; derrière un proxy de confiance
+  (`TRUST_PROXY=true`), seule la dernière adresse, écrite par le proxy, est prise en compte.
+- **Blocage par compte** : après 5 échecs de connexion sur un même compte, quelle que soit l'adresse d'origine,
+  les tentatives sont refusées pendant 15 minutes.
+- **Mots de passe et codes de suivi** hachés avec scrypt (N = 2^15, sel aléatoire, paramètres stockés avec
+  l'empreinte pour pouvoir les durcir) ; comparaison en temps constant ; même message et même temps de calcul
+  que l'email existe ou non.
+- **En-têtes** : CSP stricte (aucun script ni style externe ou intégré), HSTS, interdiction d'intégration dans un cadre,
+  `nosniff`, réponses d'API non mises en cache. Requêtes de plus de 64 Ko refusées.
+- **Surface réduite** : documentation de l'API masquée en production (`API_DOCS=true` pour l'afficher),
+  aucune autorisation CORS, contraintes en base en plus de la validation de l'API.
 - Le code de suivi passe dans le corps d'une requête POST, jamais dans une adresse qui finirait dans les journaux.
+- Dépendances surveillées par Dependabot ; `pip-audit` et `npm audit` sans faille connue au 13 octobre 2026.
 
 ## Lancer en local
 
@@ -77,7 +89,8 @@ La documentation de l'API est sur http://127.0.0.1:8000/api/docs.
 
 Pour développer le front avec rechargement à chaud : `npm run dev` dans `frontend/` (l'API reste sur le port 8000).
 
-**En production** : définir `DATABASE_URL` et `JWT_SECRET` (voir `backend/.env.example`), puis
+**En production** : définir `DATABASE_URL` et `JWT_SECRET` (voir `backend/.env.example` ; générer la clé avec
+`python -c "import secrets; print(secrets.token_urlsafe(48))"`), servir en HTTPS, puis
 `alembic upgrade head`, puis `python -m app.cli creer-admin email@exemple.bj "Nom"` pour le premier compte.
 
 ## Tests
@@ -87,9 +100,10 @@ cd backend
 pytest
 ```
 
-**40 tests sur un vrai PostgreSQL** (pgserver en local, service PostgreSQL 16 sur GitHub Actions). Le schéma est créé
+**48 tests sur un vrai PostgreSQL** (pgserver en local, service PostgreSQL 16 sur GitHub Actions). Le schéma est créé
 par les **migrations Alembic**, comme en production. Ils couvrent la normalisation des numéros, la validation des
-données, le suivi, la vérification, les statistiques, la connexion, le circuit d'instruction, les rôles et les limites.
+données, le suivi, la vérification, les statistiques, la connexion, le circuit d'instruction, les rôles, les limites
+et les protections de sécurité.
 
 **Parcours complet dans un navigateur** (`e2e/parcours.cjs`, Playwright) : un citoyen signale, suit son dossier avec
 un mauvais puis le bon code ; un agent se connecte, tente de valider sans motif (refusé), valide ; un autre citoyen

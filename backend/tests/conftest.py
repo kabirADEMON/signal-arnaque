@@ -9,6 +9,7 @@ if not TEST_URL:
 
     TEST_URL = local_database_url("signal_arnaque_test", fresh=True)
 os.environ["DATABASE_URL"] = TEST_URL
+os.environ.setdefault("JWT_SECRET", "cle-de-test-uniquement-0123456789abcdef")
 os.environ["FRONTEND_DIST"] = "__pas_de_front_en_test__"
 
 import pytest  # noqa: E402

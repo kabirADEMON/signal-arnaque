@@ -12,21 +12,27 @@ from .config import get_settings
 
 # ---------- Mots de passe et codes de suivi (scrypt, bibliothèque standard) ----------
 
-_N, _R, _P = 2**14, 8, 1
+# Paramètres stockés avec chaque empreinte : on pourra les durcir plus tard sans casser
+# les comptes existants. N = 2^15 : environ 32 Mo et une fraction de seconde par calcul.
+_N, _R, _P = 2**15, 8, 1
+_MAXMEM = 64 * 1024 * 1024
+
+
+def _scrypt(secret: str, salt: bytes, n: int, r: int, p: int) -> bytes:
+    return hashlib.scrypt(secret.encode(), salt=salt, n=n, r=r, p=p, dklen=32, maxmem=_MAXMEM)
 
 
 def hash_secret(secret: str) -> str:
     salt = secrets.token_bytes(16)
-    digest = hashlib.scrypt(secret.encode(), salt=salt, n=_N, r=_R, p=_P, dklen=32)
-    return f"scrypt${salt.hex()}${digest.hex()}"
+    return f"scrypt${_N}${_R}${_P}${salt.hex()}${_scrypt(secret, salt, _N, _R, _P).hex()}"
 
 
 def verify_secret(secret: str, stored: str) -> bool:
     try:
-        _, salt_hex, digest_hex = stored.split("$")
+        _, n, r, p, salt_hex, digest_hex = stored.split("$")
+        digest = _scrypt(secret, bytes.fromhex(salt_hex), int(n), int(r), int(p))
     except ValueError:
         return False
-    digest = hashlib.scrypt(secret.encode(), salt=bytes.fromhex(salt_hex), n=_N, r=_R, p=_P, dklen=32)
     return hmac.compare_digest(digest.hex(), digest_hex)
 
 
@@ -79,16 +85,32 @@ class RateLimiter:
         self.hits: dict[str, deque[float]] = defaultdict(deque)
         self.lock = threading.Lock()
 
+    def _recent(self, key: str, now: float) -> deque[float]:
+        hits = self.hits[key]
+        while hits and now - hits[0] > self.window:
+            hits.popleft()
+        return hits
+
     def allow(self, key: str, now: float | None = None) -> bool:
+        """Compte une tentative et dit si elle est permise."""
         now = time.monotonic() if now is None else now
         with self.lock:
-            hits = self.hits[key]
-            while hits and now - hits[0] > self.window:
-                hits.popleft()
+            hits = self._recent(key, now)
             if len(hits) >= self.limit:
                 return False
             hits.append(now)
             return True
+
+    def blocked(self, key: str, now: float | None = None) -> bool:
+        """Dit si la limite est atteinte, sans compter de tentative."""
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            return len(self._recent(key, now)) >= self.limit
+
+    def hit(self, key: str, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            self._recent(key, now).append(now)
 
     def reset(self) -> None:
         with self.lock:
