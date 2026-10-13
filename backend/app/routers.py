@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from . import services
 from .database import get_db
-from .deps import current_admin, current_agent, rate_limit
+from .deps import current_admin, current_agent, limits, rate_limit
 from .models import Agent, Categorie, Element, Signalement, Statut
 from .schemas import (
     AgentIn, AgentOut, ChangementStatutIn, ConnexionIn, EtapeOut, EvenementOut, JetonOut,
@@ -54,9 +54,14 @@ def statistiques(db: Session = Depends(get_db)):
 
 @public.post("/auth/connexion", response_model=JetonOut, dependencies=[Depends(rate_limit("connexion"))])
 def connexion(data: ConnexionIn, db: Session = Depends(get_db)):
-    agent = db.scalar(select(Agent).where(func.lower(Agent.email) == data.email.lower()))
+    compte = data.email.lower()
+    if limits["echecs_compte"].blocked(compte):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            "Trop d'échecs pour ce compte. Réessayez dans 15 minutes.")
+    agent = db.scalar(select(Agent).where(func.lower(Agent.email) == compte))
     ok = verify_secret(data.mot_de_passe, agent.mot_de_passe_hash if agent else DUMMY_HASH)
     if not agent or not ok or not agent.actif:
+        limits["echecs_compte"].hit(compte)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Email ou mot de passe incorrect")
     return JetonOut(access_token=create_token(agent.id), nom=agent.nom, role=agent.role)
 

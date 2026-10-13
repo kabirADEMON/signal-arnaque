@@ -12,6 +12,8 @@ from tests.pg import local_database_url
 
 
 def main() -> None:
+    os.environ.setdefault("ALLOW_DEV_SECRET", "1")  # en local uniquement
+    os.environ.setdefault("API_DOCS", "1")
     os.environ["DATABASE_URL"] = local_database_url("signal_arnaque", fresh="--neuf" in sys.argv)
     from alembic import command
     from alembic.config import Config
